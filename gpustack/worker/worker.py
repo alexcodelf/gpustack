@@ -20,7 +20,7 @@ from gpustack.utils import platform
 from gpustack.utils.network import get_first_non_loopback_ip
 from gpustack.client import ClientSet
 from gpustack.logging import setup_logging
-from gpustack.utils.process import add_signal_handlers_in_loop
+from gpustack.utils.process import add_signal_handlers_in_loop, setup_windows_job_object
 from gpustack.utils.task import run_periodically_in_thread
 from gpustack.worker.model_file_manager import ModelFileManager
 from gpustack.worker.serve_manager import ServeManager
@@ -123,7 +123,7 @@ class Worker:
             for worker in workers.items:
                 if worker.name == self._worker_name:
                     self._worker_id = worker.id
-                    logger.debug(f"Successfully found worker ID: {worker.id}")
+                    logger.debug("Successfully found worker ID: %s", worker.id)
                     return
 
         raise Exception(f"Worker {self._worker_name} not found.")
@@ -133,6 +133,9 @@ class Worker:
 
     def start(self):
         setup_logging(self._config.debug)
+
+        # 在Windows平台上设置Job对象管理进程
+        setup_windows_job_object()
 
         if self._is_embedded:
             setproctitle.setproctitle("gpustack_worker")
@@ -150,7 +153,7 @@ class Worker:
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         except Exception as e:
-            logger.error(f"Error serving worker APIs: {e}")
+            logger.error("Error serving worker APIs: %s", e)
         finally:
             logger.info("Worker has shut down.")
 
@@ -237,7 +240,7 @@ class Worker:
         )
 
         setup_logging()
-        logger.info(f"Serving worker APIs on {config.host}:{config.port}.")
+        logger.info("Serving worker APIs on %s:%s.", config.host, config.port)
         server = uvicorn.Server(config)
 
         await server.serve()
@@ -255,13 +258,13 @@ class Worker:
 
         current_ip = get_first_non_loopback_ip()
         if current_ip != self._worker_ip:
-            logger.info(f"Worker IP changed from {self._worker_ip} to {current_ip}")
+            logger.info("Worker IP changed from %s to %s", self._worker_ip, current_ip)
             if worker is None:
                 raise Exception(f"Worker {self._worker_name} not found")
 
             self.update_worker_ip(worker, current_ip)
         elif worker and current_ip != worker.ip:
-            logger.info(f"Worker IP changed from {worker.ip} to {current_ip}")
+            logger.info("Worker IP changed from %s to %s", worker.ip, current_ip)
             self.update_worker_ip(worker, current_ip)
 
     def update_worker_ip(self, worker, current_ip: str):

@@ -15,6 +15,15 @@ threading_stop_event = threading.Event()
 termination_signal_handled = False
 
 
+# Job object manager class
+class JobObjectManager:
+    def __init__(self):
+        self.job_object = None
+
+
+job_manager = JobObjectManager()
+
+
 def add_signal_handlers():
     signal.signal(signal.SIGTERM, handle_termination_signal)
 
@@ -28,14 +37,14 @@ def add_signal_handlers_in_loop():
     loop = asyncio.get_event_loop()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
-        logger.debug(f"Adding signal handler for {sig}")
+        logger.debug("Adding signal handler for %s", sig)
         loop.add_signal_handler(
             sig, lambda: asyncio.create_task(shutdown_event_loop(sig, loop))
         )
 
 
 async def shutdown_event_loop(signal=None, loop=None):
-    logger.debug(f"Received signal: {signal}. Shutting down gracefully...")
+    logger.debug("Received signal: %s. Shutting down gracefully...", signal)
 
     threading_stop_event.set()
 
@@ -80,7 +89,7 @@ def terminate_process_tree(pid: int):
     except psutil.NoSuchProcess:
         pass
     except Exception as e:
-        logger.error(f"Error while terminating process tree: {e}")
+        logger.error("Error while terminating process tree: %s", e)
 
 
 def terminate_processes(processes):
@@ -119,3 +128,50 @@ def terminate_process(process):
                 process.kill()
             except psutil.NoSuchProcess:
                 pass
+
+
+def setup_windows_job_object():
+    """
+    Set up a Job object for Windows to ensure that all child processes are terminated when the main process terminates.
+    This is the best practice for managing process groups on Windows.
+    """
+    if platform.system() != "windows":
+        return
+
+    try:
+        # Import win32 related modules only on Windows
+        import win32job
+        import win32api
+
+        # Create a global Job object
+        job_name = f"GPUStackJob_{os.getpid()}"
+        h_job = win32job.CreateJobObject(None, job_name)
+
+        # Set the critical parameter: terminate all child processes when the main process terminates
+        extended_info = win32job.QueryInformationJobObject(
+            h_job, win32job.JobObjectExtendedLimitInformation
+        )
+        extended_info['BasicLimitInformation'][
+            'LimitFlags'
+        ] = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        win32job.SetInformationJobObject(
+            h_job, win32job.JobObjectExtendedLimitInformation, extended_info
+        )
+
+        # Add the current process to the Job object
+        h_process = win32api.GetCurrentProcess()
+        win32job.AssignProcessToJobObject(h_job, h_process)
+
+        # Store job object reference in the manager class
+        job_manager.job_object = h_job
+
+        logger.info("Process management initialized with Job object: %s", job_name)
+    except ImportError:
+        logger.warning(
+            "win32job module not available. Process management with Job objects disabled."
+        )
+        logger.warning(
+            "Install pywin32 package to enable advanced process management on Windows."
+        )
+    except (OSError, RuntimeError) as e:
+        logger.error("Failed to initialize process management with Job object: %s", e)

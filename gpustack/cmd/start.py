@@ -13,6 +13,8 @@ from gpustack.logging import setup_logging
 from gpustack.worker.worker import Worker
 from gpustack.config import Config
 from gpustack.server.server import Server
+from gpustack.utils import platform
+from gpustack.utils.process import setup_windows_job_object
 
 
 logger = logging.getLogger(__name__)
@@ -337,6 +339,9 @@ def run(args: argparse.Namespace):
         set_third_party_env(cfg=cfg)
         multiprocessing.set_start_method('spawn')
 
+        if platform.system() == "windows":
+            setup_windows_job_object()
+
         if cfg.server_url:
             run_worker(cfg)
         else:
@@ -366,7 +371,7 @@ def run_server(cfg: Config):
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     except Exception as e:
-        logger.error(f"Error running server: {e}")
+        logger.error("Error running server: %s", e)
     finally:
         logger.info("Server has shut down.")
 
@@ -492,7 +497,7 @@ def get_gpustack_env_bool(env_var: str) -> Optional[bool]:
 def debug_env_info():
     hf_endpoint = os.getenv("HF_ENDPOINT")
     if hf_endpoint:
-        logger.debug(f"Using HF_ENDPOINT: {hf_endpoint}")
+        logger.debug("Using HF_ENDPOINT: %s", hf_endpoint)
 
 
 def set_third_party_env(cfg: Config):
