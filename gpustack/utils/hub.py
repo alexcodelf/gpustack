@@ -27,6 +27,12 @@ MODELSCOPE_CONFIG_IGNORE_FILE_PATTERN = [
     # Additional
     r'\w+\.zip',
     r'\w+\.onnx',
+    r'\w+\.tar',
+    r'\w+\.gz',
+    r'\w+\.png',
+    r'\w+\.md',
+    r'\w+\.nemo',
+    r'\w+\.llamafile',
 ]
 
 
@@ -48,7 +54,7 @@ def match_hugging_face_files(
     file_list: List[str] = []
     for file in files:
         rel_path = Path(file).relative_to(repo_id)
-        file_list.append(str(rel_path))
+        file_list.append(rel_path.as_posix())
 
     matching_files = [file for file in file_list if fnmatch.fnmatch(file, filename)]  # type: ignore
     matching_files = sorted(matching_files)

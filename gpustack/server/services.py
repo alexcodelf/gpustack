@@ -67,11 +67,19 @@ class UserService:
 
     @locked_cached(ttl=60)
     async def get_by_id(self, user_id: int) -> Optional[User]:
-        return await User.one_by_id(self.session, user_id)
+        result = await User.one_by_id(self.session, user_id)
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     @locked_cached(ttl=60)
     async def get_by_username(self, username: str) -> Optional[User]:
-        return await User.one_by_field(self.session, "username", username)
+        result = await User.one_by_field(self.session, "username", username)
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     async def create(self, user: User):
         return await User.create(self.session, user)
@@ -95,7 +103,11 @@ class APIKeyService:
 
     @locked_cached(ttl=60)
     async def get_by_access_key(self, access_key: str) -> Optional[ApiKey]:
-        return await ApiKey.one_by_field(self.session, "access_key", access_key)
+        result = await ApiKey.one_by_field(self.session, "access_key", access_key)
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     async def delete(self, api_key: ApiKey):
         result = await api_key.delete(self.session)
@@ -109,11 +121,19 @@ class WorkerService:
 
     @locked_cached(ttl=60)
     async def get_by_id(self, worker_id: int) -> Optional[Worker]:
-        return await Worker.one_by_id(self.session, worker_id)
+        result = await Worker.one_by_id(self.session, worker_id)
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     @locked_cached(ttl=60)
     async def get_by_name(self, name: str) -> Optional[Worker]:
-        return await Worker.one_by_field(self.session, "name", name)
+        result = await Worker.one_by_field(self.session, "name", name)
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     async def update(self, worker: Worker, source: Union[dict, SQLModel, None] = None):
         result = await worker.update(self.session, source)
@@ -134,11 +154,19 @@ class ModelService:
 
     @locked_cached(ttl=60)
     async def get_by_id(self, model_id: int) -> Optional[Model]:
-        return await Model.one_by_id(self.session, model_id)
+        result = await Model.one_by_id(self.session, model_id)
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     @locked_cached(ttl=60)
     async def get_by_name(self, name: str) -> Optional[Model]:
-        return await Model.one_by_field(self.session, "name", name)
+        result = await Model.one_by_field(self.session, "name", name)
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     async def update(self, model: Model, source: Union[dict, SQLModel, None] = None):
         result = await model.update(self.session, source)
@@ -159,10 +187,16 @@ class ModelInstanceService:
 
     @locked_cached(ttl=60)
     async def get_running_instances(self, model_id: int) -> List[ModelInstance]:
-        return await ModelInstance.all_by_fields(
+        results = await ModelInstance.all_by_fields(
             self.session,
             fields={"model_id": model_id, "state": ModelInstanceStateEnum.RUNNING},
         )
+        if results is None:
+            return []
+
+        for result in results:
+            self.session.expunge(result)
+        return results
 
     async def create(self, model_instance):
         result = await ModelInstance.create(self.session, model_instance)
@@ -188,10 +222,14 @@ class ModelUsageService:
 
     @locked_cached(ttl=60)
     async def get_by_fields(self, fields: dict) -> ModelUsage:
-        return await ModelUsage.one_by_fields(
+        result = await ModelUsage.one_by_fields(
             self.session,
             fields=fields,
         )
+        if result is None:
+            return None
+        self.session.expunge(result)
+        return result
 
     async def create(self, model_usage: ModelUsage):
         return await ModelUsage.create(self.session, model_usage)

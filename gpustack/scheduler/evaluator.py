@@ -7,8 +7,10 @@ from typing import List, Tuple
 from sqlmodel.ext.asyncio.session import AsyncSession
 from cachetools import TTLCache
 
+from gpustack.api.exceptions import HTTPException
 from gpustack.config.config import Config
 from gpustack.policies.base import ModelInstanceScheduleCandidate, Worker
+from gpustack.routes.models import validate_model_in
 from gpustack.scheduler import scheduler
 from gpustack.server.catalog import model_set_specs_by_key
 from gpustack.schemas.model_evaluations import (
@@ -48,12 +50,13 @@ async def evaluate_models(
     Evaluate the compatibility of a list of model specs with the available workers.
     """
     workers = await Worker.all(session)
-    async with asyncio.TaskGroup() as tg:
-        tasks = {
-            tg.create_task(evaluate_model_with_cache(config, model, workers)): model
-            for model in model_specs
-        }
-    return [task.result() for task in tasks]
+
+    async def evaluate(model: ModelSpec):
+        return await evaluate_model_with_cache(config, session, model, workers)
+
+    tasks = [evaluate(model) for model in model_specs]
+    results = await asyncio.gather(*tasks)
+    return results
 
 
 def make_hashable_key(model: ModelSpec, workers: List[Worker]) -> str:
@@ -95,6 +98,7 @@ def make_hashable_key(model: ModelSpec, workers: List[Worker]) -> str:
 
 async def evaluate_model_with_cache(
     config: Config,
+    session: AsyncSession,
     model: ModelSpec,
     workers: List[Worker],
 ) -> ModelEvaluationResult:
@@ -105,7 +109,7 @@ async def evaluate_model_with_cache(
         )
         return evaluate_cache[cache_key]
 
-    result = await evaluate_model(config, model, workers)
+    result = await evaluate_model(config, session, model, workers)
     evaluate_cache[cache_key] = result
     return result
 
@@ -113,6 +117,7 @@ async def evaluate_model_with_cache(
 @time_decorator
 async def evaluate_model(
     config: Config,
+    session: AsyncSession,
     model: ModelSpec,
     workers: List[Worker],
 ) -> ModelEvaluationResult:
@@ -126,6 +131,7 @@ async def evaluate_model(
     await set_gguf_model_file_path(config, model)
 
     evaluations = [
+        (evaluate_model_input, (session, model)),
         (evaluate_environment, (model, workers)),
         (evaluate_model_metadata, (config, model)),
     ]
@@ -133,9 +139,7 @@ async def evaluate_model(
         compatible, messages = await evaluation(*args)
         if not compatible:
             result.compatible = False
-            result.compatibility_messages = make_compatibility_messages_user_friendly(
-                messages
-            )
+            result.compatibility_messages = messages
             return result
 
     candidate, schedule_messages = await scheduler.find_candidate(
@@ -186,23 +190,10 @@ def summarize_candidate_resource_claim(
     return ResourceClaim(ram=ram, vram=vram)
 
 
-def make_compatibility_messages_user_friendly(messages: List[str]) -> List[str]:
-    """
-    Convert a compatibility message to a user-friendly format.
-    """
-    for i, message in enumerate(messages):
-        if "option `trust_remote_code=True`" in message:
-            messages[i] = message.replace(
-                "option `trust_remote_code=True`",
-                "backend parameter `--trust-remote-code`",
-            )
-    return messages
-
-
 async def set_gguf_model_file_path(config: Config, model: ModelSpec):
     if (
         model.source == SourceEnum.HUGGING_FACE
-        and "GGUF" in model.huggingface_repo_id.upper()
+        and model.backend == BackendEnum.LLAMA_BOX
         and not model.huggingface_filename
     ):
         model.huggingface_filename = await run_in_thread(
@@ -213,7 +204,7 @@ async def set_gguf_model_file_path(config: Config, model: ModelSpec):
         )
     elif (
         model.source == SourceEnum.MODEL_SCOPE
-        and "GGUF" in model.model_scope_model_id.upper()
+        and model.backend == BackendEnum.LLAMA_BOX
         and not model.model_scope_file_path
     ):
         model.model_scope_file_path = await run_in_thread(
@@ -247,6 +238,20 @@ async def evaluate_model_metadata(
             await scheduler.evaluate_audio_model(config, model)
         else:
             await scheduler.evaluate_pretrained_config(model)
+    except Exception as e:
+        return False, [str(e)]
+
+    return True, []
+
+
+async def evaluate_model_input(
+    session: AsyncSession,
+    model: ModelSpec,
+) -> Tuple[bool, List[str]]:
+    try:
+        await validate_model_in(session, model)
+    except HTTPException as e:
+        return False, [e.message]
     except Exception as e:
         return False, [str(e)]
 

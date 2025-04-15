@@ -2,7 +2,6 @@
 # torch-npu has the mapping requirements for the CANN version,
 # please check https://www.hiascend.com/document/detail/zh/Pytorch/600/configandinstg/instg/insg_0001.html for details.
 
-ARG PYTHON_VERSION=3.10
 ARG CANN_VERSION=8.0.0.beta1
 ARG CANN_CHIP=910b
 ARG TORCH_VERSION=2.1.0
@@ -16,38 +15,49 @@ ARG TARGETPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update -y && apt-get install -y software-properties-common \
-      && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
-      && add-apt-repository -y ppa:deadsnakes/ppa \
-      && apt-get update -y
-
 #
 # Install tools
 #
 
-RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=private \
-    --mount=type=cache,target=/var/cache/apt,sharing=private <<EOF
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONPATH="/usr/lib/python3.10/site-packages:/usr/lib64/python3.10/site-packages"
+
+RUN <<EOF
+    # Refresh
+    apt-get update -y && apt-get install -y --no-install-recommends \
+        software-properties-common apt-transport-https \
+      && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
+      && add-apt-repository -y ppa:deadsnakes/ppa \
+      && apt-get update -y
 
     # Install
-    apt-get update && apt-get install -y --no-install-recommends \
-        apt-transport-https ca-certificates build-essential binutils bash openssl \
-        unzip xz-utils \
-        git git-lfs \
+    apt-get install -y --no-install-recommends \
+        ca-certificates build-essential binutils bash openssl \
         curl wget aria2 \
+        git git-lfs \
+        unzip xz-utils \
         tzdata locales \
         iproute2 iputils-ping ifstat net-tools dnsutils pciutils ipmitool \
-        procps sysstat dstat htop \
+        procps sysstat htop \
         tini vim jq bc tree
+
+    # Update python
+    apt-get install -y --no-install-recommends \
+        python3.10 python3.10-dev python3.10-distutils python3.10-venv
+    if [ -f /etc/alternatives/python ]; then update-alternatives --remove-all python; fi; update-alternatives --install /usr/bin/python python /usr/bin/python3.10 10
+    if [ -f /etc/alternatives/python3 ]; then update-alternatives --remove-all python3; fi; update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 10
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+
+    # Update locale
+    localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
 
     # Cleanup
     rm -rf /var/tmp/* \
-        && rm -rf /tmp/*
-
-    # Set locale
-    localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
+        && rm -rf /tmp/* \
+        && rm -rf /var/cache/apt \
+        && pip cache purge
 EOF
+
 ENV LANG='en_US.UTF-8' \
     LANGUAGE='en_US:en' \
     LC_ALL='en_US.UTF-8'
@@ -56,8 +66,8 @@ ENV LANG='en_US.UTF-8' \
 # Install GCC
 #
 
-RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=private \
-    --mount=type=cache,target=/var/cache/apt,sharing=private <<EOF
+RUN <<EOF
+    # GCC
 
     # Install
     apt-get install -y --no-install-recommends \
@@ -78,68 +88,46 @@ RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=private \
 
     # Cleanup
     rm -rf /var/tmp/* \
-        && rm -rf /tmp/*
+        && rm -rf /tmp/* \
+        && rm -rf /var/cache/apt
 EOF
 
 #
-# Install CMake/Make/CCache
+# Install CMake/Make/SCCache
 #
 
-ENV CMAKE_VERSION=3.22.1
-RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=private \
-    --mount=type=cache,target=/var/cache/apt,sharing=private <<EOF
+RUN <<EOF
+    # CMake/Make/SCCache
 
     # Install
     apt-get install -y --no-install-recommends \
-        pkg-config make ccache
-
-    curl -sL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz" | tar -zx -C /usr --strip-components 1
-
-    # Cleanup
-    rm -rf /var/tmp/* \
-        && rm -rf /tmp/*
-EOF
-
-#
-# Install Python
-#
-
-ARG PYTHON_VERSION
-
-RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=private \
-    --mount=type=cache,target=/var/cache/apt,sharing=private \
-    --mount=type=cache,target=/root/.cache,sharing=private <<EOF
-
-    # Install
-    apt-get install -y --no-install-recommends \
-        python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils python${PYTHON_VERSION}-venv
-
-    # Update alternatives
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION}
-    if [ -f /etc/alternatives/python ]; then update-alternatives --remove-all python; fi; update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 10
-    if [ -f /etc/alternatives/python3 ]; then update-alternatives --remove-all python3; fi; update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 10
+        pkg-config make
+    curl -sL "https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1-linux-$(uname -m).tar.gz" | tar -zx -C /usr --strip-components 1
+    curl -sL "https://github.com/mozilla/sccache/releases/download/v0.10.0/sccache-v0.10.0-$(uname -m)-unknown-linux-musl.tar.gz" | tar -zx -C /usr/bin --strip-components 1
 
     # Cleanup
     rm -rf /var/tmp/* \
-        && rm -rf /tmp/*
+        && rm -rf /tmp/* \
+        && rm -rf /var/cache/apt
 EOF
 
 #
 # Install Dependencies
 #
 
-RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=private \
-    --mount=type=cache,target=/var/cache/apt,sharing=private <<EOF
+RUN <<EOF
+    # Dependencies
 
     # Install
     apt-get install -y --no-install-recommends \
         zlib1g zlib1g-dev libbz2-dev liblzma-dev libffi-dev openssl libssl-dev libsqlite3-dev \
-        libblas-dev liblapack-dev libopenblas-dev libblas3 liblapack3 libhdf5-dev \
+        libblas-dev liblapack-dev libopenblas-dev libblas3 liblapack3 gfortran libhdf5-dev \
         libxml2 libxslt1-dev libgl1-mesa-glx libgmpxx4ldbl
 
     # Cleanup
     rm -rf /var/tmp/* \
-        && rm -rf /tmp/*
+        && rm -rf /tmp/* \
+        && rm -rf /var/cache/apt
 EOF
 
 #
@@ -153,7 +141,9 @@ ENV CANN_VERSION=${CANN_VERSION} \
     CANN_CHIP=${CANN_CHIP} \
     CANN_HOME="/usr/local/Ascend"
 
-RUN --mount=type=cache,target=/root/.cache,sharing=private <<EOF
+RUN <<EOF
+    # CANN Toolkit
+
     OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
     ARCH="$(uname -m)"
     DOWNLOAD_VERSION="$(echo ${CANN_VERSION%\.beta1} | tr '[:lower:]' '[:upper:]')"
@@ -167,15 +157,20 @@ RUN --mount=type=cache,target=/root/.cache,sharing=private <<EOF
     TOOLKIT_FILE="Ascend-cann-toolkit_${DOWNLOAD_VERSION}_${OS}-${ARCH}.run"
     TOOLKIT_PATH="/tmp/${TOOLKIT_FILE}"
     TOOLKIT_URL="${URL_PREFIX}/${TOOLKIT_FILE}?${URL_SUFFIX}"
-    curl -fL -o "${TOOLKIT_PATH}" "${TOOLKIT_URL}"
+    curl -H 'Referer: https://www.hiascend.com/' -fL -o "${TOOLKIT_PATH}" "${TOOLKIT_URL}"
     chmod a+x "${TOOLKIT_PATH}"
     printf "Y\n" | "${TOOLKIT_PATH}" --install --install-for-all --install-path="${CANN_HOME}"
-    rm -f "${TOOLKIT_PATH}"
-    rm -rf /var/log/ascend
-    rm -rf /var/log/ascend_seclog
+
+    # Cleanup
+    rm -f "${TOOLKIT_PATH}" \
+        && rm -rf /var/log/ascend \
+        && rm -rf /var/log/ascend_seclog \
+        && pip cache purge
 EOF
 
 RUN <<EOF
+    # CANN Kernels
+
     OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
     ARCH="$(uname -m)"
     DOWNLOAD_VERSION="$(echo ${CANN_VERSION%\.beta1} | tr '[:lower:]' '[:upper:]')"
@@ -187,23 +182,26 @@ RUN <<EOF
 
     # Install kernels
     KERNELS_FILE="Ascend-cann-kernels-${CANN_CHIP}_${DOWNLOAD_VERSION}_${OS}-${ARCH}.run"
-    if ! curl -fsSIL "${URL_PREFIX}/${KERNELS_FILE}?${URL_SUFFIX}" >/dev/null 2>&1; then
+    if ! curl -H 'Referer: https://www.hiascend.com/' -fsSIL "${URL_PREFIX}/${KERNELS_FILE}?${URL_SUFFIX}" >/dev/null 2>&1; then
         # Fallback to generic kernels
         KERNELS_FILE="Ascend-cann-kernels-${CANN_CHIP}_${DOWNLOAD_VERSION}_${OS}.run"
     fi
     KERNELS_PATH="/tmp/${KERNELS_FILE}"
     KERNELS_URL="${URL_PREFIX}/${KERNELS_FILE}?${URL_SUFFIX}"
-    curl -fL -o "${KERNELS_PATH}" "${KERNELS_URL}"
+    curl -H 'Referer: https://www.hiascend.com/' -fL -o "${KERNELS_PATH}" "${KERNELS_URL}"
     chmod a+x "${KERNELS_PATH}"
     printf "Y\n" |"${KERNELS_PATH}" --install --install-for-all --install-path="${CANN_HOME}"
 
     # Cleanup
-    rm -f "${KERNELS_PATH}"
-    rm -rf /var/log/ascend
-    rm -rf /var/log/ascend_seclog
+    rm -f "${KERNELS_PATH}" \
+        && rm -rf /var/log/ascend \
+        && rm -rf /var/log/ascend_seclog \
+        && pip cache purge
 EOF
 
 RUN <<EOF
+    # CANN NNAL
+
     OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
     ARCH="$(uname -m)"
     DOWNLOAD_VERSION="$(echo ${CANN_VERSION%\.beta1} | tr '[:lower:]' '[:upper:]')"
@@ -217,19 +215,29 @@ RUN <<EOF
     NNAL_FILE="Ascend-cann-nnal_${DOWNLOAD_VERSION}_${OS}-${ARCH}.run"
     NNAL_PATH="/tmp/${NNAL_FILE}"
     NNAL_URL="${URL_PREFIX}/${NNAL_FILE}?${URL_SUFFIX}"
-    curl -fL -o "${NNAL_PATH}" "${NNAL_URL}"
+    curl -H 'Referer: https://www.hiascend.com/' -fL -o "${NNAL_PATH}" "${NNAL_URL}"
     chmod a+x "${NNAL_PATH}"
     printf "Y\n" | "${NNAL_PATH}" --install --install-path="${CANN_HOME}"
 
     # Cleanup
-    rm -f "${NNAL_PATH}"
-    rm -rf /var/log/ascend_seclog
-    rm -rf /var/log/cann_atb_log
+    rm -f "${NNAL_PATH}" \
+        && rm -rf /var/log/ascend_seclog \
+        && rm -rf /var/log/cann_atb_log \
+        && pip cache purge
 EOF
 
-COPY --from=thxcode/mindie:1.0.0-800I-A2-py311-openeuler24.03-lts --link=true --chown=root:root ${CANN_HOME}/atb-models ${CANN_HOME}/atb-models
+COPY --from=thxcode/mindie:1.0.0-800I-A2-py311-openeuler24.03-lts --chown=root:root ${CANN_HOME}/atb-models ${CANN_HOME}/atb-models
 RUN <<EOF
+    # ATB Models
+
+    # Install
     pip install ${CANN_HOME}/atb-models/*.whl
+
+    # Cleanup
+    rm -f "${NNAL_PATH}" \
+        && rm -rf /var/log/ascend_seclog \
+        && rm -rf /var/log/cann_atb_log \
+        && pip cache purge
 EOF
 
 #
@@ -241,6 +249,8 @@ ARG TORCH_NPU_VERSION
 ARG MINDIE_VERSION
 
 RUN <<EOF
+    # MindIE
+
     OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
     ARCH="$(uname -m)"
     DOWNLOAD_VERSION="$(echo ${MINDIE_VERSION%\.beta1} | tr '[:lower:]' '[:upper:]')"
@@ -270,23 +280,23 @@ RUN <<EOF
     MINDIE_FILE="Ascend-mindie_${DOWNLOAD_VERSION}_${OS}-${ARCH}.run"
     MINDIE_PATH="/tmp/${MINDIE_FILE}"
     MINDIE_URL="${URL_PREFIX}/${MINDIE_FILE}?${URL_SUFFIX}"
-    curl -fL -o "${MINDIE_PATH}" "${MINDIE_URL}"
+    curl -H 'Referer: https://www.hiascend.com/' -fL -o "${MINDIE_PATH}" "${MINDIE_URL}"
     chmod a+x "${MINDIE_PATH}"
     printf "Y\n" | "${MINDIE_PATH}" --install --install-path="${CANN_HOME}"
     chmod +w "${CANN_HOME}/mindie/latest/mindie-service/conf"
 
     # Cleanup
-    rm -f "${MINDIE_PATH}"
-    rm -rf /var/log/mindie_log
-    rm -rf ~/log
+    rm -f "${MINDIE_PATH}" \
+        && rm -rf /var/log/mindie_log \
+        && rm -rf ~/log \
+        && pip cache purge
 EOF
 
 #
 # Install GPUStack
 #
 
-RUN --mount=type=cache,target=/root/.cache,sharing=private \
-    --mount=type=bind,target=/workspace/gpustack,rw <<EOF
+RUN --mount=type=bind,target=/workspace/gpustack,rw <<EOF
     # Build
     cd /workspace/gpustack && \
         make build
@@ -297,7 +307,8 @@ RUN --mount=type=cache,target=/root/.cache,sharing=private \
 
     # Post-install
     pip install transformers==4.46.3 pillow==11.0.0 && \
-        pip list
+        pip list && \
+        python -m site
 
     # Download tools
     gpustack download-tools --device npu
@@ -305,6 +316,10 @@ RUN --mount=type=cache,target=/root/.cache,sharing=private \
     # Set up environment
     mkdir -p /var/lib/gpustack && \
         chmod -R 0755 /var/lib/gpustack
+
+    # Cleanup
+    rm -rf /workspace/gpustack/dist \
+        && pip cache purge
 EOF
 
 #
@@ -336,4 +351,4 @@ RUN <<EOF
     # we need to process environment setting up during GPUStack deployment.
 EOF
 
-ENTRYPOINT [ "tini", "--", "gpustack", "start" ]
+ENTRYPOINT [ "tini", "--", "/usr/bin/bash", "-c", "source /etc/profile && exec gpustack start \"$@\"", "--" ]
