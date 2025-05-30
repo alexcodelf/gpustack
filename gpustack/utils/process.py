@@ -122,3 +122,68 @@ def terminate_process(process):
                 process.wait(timeout=1)
             except (psutil.NoSuchProcess, psutil.TimeoutExpired):
                 pass
+
+
+def parent_process_monitor(parent_pid=None):
+    """
+    Monitor the parent process and exit if it is not running.
+
+    Args:
+        parent_pid: The PID of the parent process to monitor.
+
+    Returns:
+        thread: A thread that monitors the parent process.
+    """
+    if parent_pid is None:
+        parent_pid = os.getppid()
+
+    thread = threading.Thread(target=monitor_loop, args=(parent_pid,), daemon=True)
+    thread.start()
+    return thread
+
+
+def monitor_loop(parent_pid: int, check_interval: float = 1) -> None:
+    """
+    Monitor the parent process and exit if it is not running.
+
+    Args:
+        parent_pid: The PID of the parent process to monitor.
+        check_interval: Interval in seconds between checks. Must be positive.
+
+    Raises:
+        ValueError: If check_interval is not positive.
+    """
+    if not isinstance(check_interval, (int, float)) or check_interval <= 0:
+        raise ValueError(f"check_interval must be positive, got {check_interval}")
+
+    while not threading_stop_event.is_set():
+        try:
+            if not psutil.pid_exists(parent_pid):
+                logger.warning(
+                    f"Parent process with PID {parent_pid} not found, exiting"
+                )
+                os._exit(0)  # Force immediate exit without cleanup
+        except psutil.ZombieProcess:
+            logger.warning(
+                f"Parent process with PID {parent_pid} is a zombie process, exiting"
+            )
+            os._exit(0)
+        except psutil.NoSuchProcess:
+            logger.warning(
+                f"Parent process with PID {parent_pid} no longer exists, exiting"
+            )
+            os._exit(0)
+        except psutil.AccessDenied:
+            logger.warning(
+                f"Access denied when checking parent process with PID {parent_pid}, exiting"
+            )
+            os._exit(0)
+        except Exception as e:
+            logger.error(
+                f"Unexpected error checking parent process with PID {parent_pid}: {e}, exiting"
+            )
+            os._exit(1)  # Use exit code 1 for errors
+
+        # Use event with timeout instead of sleep to allow for clean shutdown
+        if threading_stop_event.wait(timeout=check_interval):
+            break

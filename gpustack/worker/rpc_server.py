@@ -10,7 +10,7 @@ import setproctitle
 
 from gpustack.utils import platform
 from gpustack.utils.compat_importlib import pkg_resources
-from gpustack.utils.process import add_signal_handlers
+from gpustack.utils.process import add_signal_handlers, parent_process_monitor
 from gpustack.worker.backends.base import get_env_name_by_vendor
 
 
@@ -40,6 +40,8 @@ class RPCServer:
     ):
         setproctitle.setproctitle(f"gpustack_rpc_server_process: gpu_{gpu_index}")
         add_signal_handlers()
+
+        parent_process_monitor(os.getppid())
 
         with open(log_file_path, "w", buffering=1, encoding="utf-8") as log_file:
             with redirect_stdout(log_file), redirect_stderr(log_file):
